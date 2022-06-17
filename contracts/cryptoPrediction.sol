@@ -542,11 +542,23 @@ contract TokenMintERC20Token is ERC20 {
     }
 }
 
+interface IMegaPool {
+    function whitelistWinners() external ;
+    function register() external;
+     function random() external ; 
+     function transferAmount(address winnr, address _erc20Token) external;
+}
+
+
+
 contract cryptoPredictionPool is ReentrancyGuard {
     
-    uint256 public poolId = 1;
-    uint public rebasePoolId = 1;
+    uint256 public poolId ;
+    uint public rebasePoolId ;
     address public owner;
+    address rebaseCaller;
+
+    address MegaPool ;
     
     /* Pool Token Address */
     
@@ -562,13 +574,33 @@ contract cryptoPredictionPool is ReentrancyGuard {
     uint256 lastpoolcreated;
     uint256 public lastRebaseCreated;
 
+    /* Mega Pool Information */
+
+    /* array of winners addresses*/
+
+    address[] internal winners;
+
+    /* assigning id numbers to the winners */
+
+    uint num;
+
+    /* Returns the winner of mega pool*/
+
+    address public WinnerAddress;
+    
+    mapping(uint => address) public userId;
+    mapping(address => bool) public whitelisted;
+    mapping(address => bool) public registered;
+
 
     struct Rebase {
         uint NumberOfOccurances;
-        uint numberOfPositiveDates;
+        uint numberOfNegativeDates;
         uint createdTime;
         uint endingTime;
     }
+
+    
 
 
     struct UserBets{
@@ -580,6 +612,8 @@ contract cryptoPredictionPool is ReentrancyGuard {
         uint256 totalbet;
         bool claimed;
     }
+
+    
     
     struct User{
         uint256[] pools;
@@ -604,13 +638,29 @@ contract cryptoPredictionPool is ReentrancyGuard {
     mapping(uint256 => Pool) pool;
     mapping(address => User) user;
     mapping(uint256 => Data) data;
-    mapping(uint256 => Rebase) rebase;
+    mapping(uint256 => Rebase) rebasePool;
     mapping(uint256 => bool) IsRebasePositive;
+    mapping(uint => bool)  isRebaseNegative;
+    mapping(uint => mapping(uint => uint)) public  poolBetAmount;
     
     constructor(address _pool_address) {
         owner = msg.sender;
         pool_address = TokenMintERC20Token(_pool_address);
         lastcreated = block.timestamp;
+    }
+
+   
+    /* To set the rebase caller */
+
+    function setRebaseCaller(address _rebaseCaller) public {
+        require(msg.sender == owner, "Not Owner");
+        rebaseCaller = _rebaseCaller;
+    }
+
+    /* This is to check if rebase is negative */
+
+    function checkRebase() public view returns(bool) {
+        return isRebaseNegative[poolId];
     }
     
     /*  Registering the username to the contract */
@@ -623,32 +673,89 @@ contract cryptoPredictionPool is ReentrancyGuard {
         return true;
     }
 
-    /* Will be called by the admin if the rebase is positive or negative */
+    /* Function to be called by admin to update if the rebase is positive */
 
-    function callRebase(bool _rebaseIsPositive, uint256 _rebasePoolId) public {
+    function callRebase(bool _natureRebase) public {
+        require(msg.sender == rebaseCaller, "Not rebasecaller");
+        rebasePool[rebasePoolId].NumberOfOccurances += 1;
+        isRebaseNegative[poolId] = _natureRebase;
+        if(_natureRebase == false){
+            rebasePool[rebasePoolId].numberOfNegativeDates += 1;
+        }
+    }
+
+    
+
+    /* Get Erc20 balance of the contract */
+
+    function getBalance() public view returns(uint) {
+        return pool_address.balanceOf(address(this));
+    }
+
+    /* Mega Pool will be called if the conditions met */
+  
+     function callMegaPool(address mega) public {
+         require(msg.sender == owner, "Not Owner");
+        // require(rebasePool[rebasePoolId].numberOfNegativeDates > 15, "has not met the eligibility criteria to call mega pool");
+            MegaPool = mega;
+            pool_address.transfer(MegaPool, pool_address.balanceOf(address(this)));
+    }
+
+    /* Admin will whitelist the winners */
+
+    function whitelisting(address[] memory  users) public {
         require(msg.sender == owner, "Not Owner");
-        require(_rebasePoolId <= rebasePoolId, "Invalid");
-        Rebase storage r = rebase[_rebasePoolId];
-        require(r.endingTime >= block.timestamp, "Ended");
-        r.NumberOfOccurances = SafeMath.add(r.NumberOfOccurances, 1);
-        if(_rebaseIsPositive == true) {
-            r.numberOfPositiveDates = SafeMath.add(r.numberOfPositiveDates, 1);
-        } 
+        IMegaPool(MegaPool).whitelistWinners();
+        for(uint i = 0; i < users.length; i ++) {
+        whitelisted[users[i]] = true;
+        }
     }
     
+    /* Whitelisted winners can register themselves for the mega pool*/
+
+    function registerforMegaPool() public {
+        require(whitelisted[msg.sender] == true, "Not Whitelisted");
+        require(registered[msg.sender] == false, "Already registered");
+        IMegaPool(MegaPool).register();        
+        winners.push(msg.sender);
+        userId[num] = msg.sender;
+        num ++;
+        registered[msg.sender] = true;
+    }
+
+
+    /* A random winner among the registered users will be announced calling this function */
+
+    function RollDice() public  {
+        require(msg.sender == owner, "Not Owner");
+        IMegaPool(MegaPool).random(); 
+        uint _id = uint(keccak256(abi.encodePacked(block.difficulty, block.timestamp, winners)))%winners.length;
+        WinnerAddress = userId[_id];
+    }
+
+    /* The winner can claim the reward in the mega pool */
+
+    function claimabel() public {
+        require(msg.sender == WinnerAddress);
+        IMegaPool(MegaPool).transferAmount(msg.sender, address(pool_address));
+    }
+
     
+
     /* For placing a prediction in the pool. */
     
     function PlaceBet(uint256 index,uint256 _prices,uint256 _percent,uint256 _poolId,uint256 _amount) public returns(bool){
         require(_poolId <= poolId,'Invalid Pool');
         require(pool_address.allowance(msg.sender,address(this))>=_amount,'Approval failed');
-        Pool storage b = pool[_poolId];
+        // Pool storage b = pool[_poolId];
         Data storage d = data[_poolId];
-        require(b.stakingends >= block.timestamp,'Ended');
+        // require(b.stakingends >= block.timestamp,'Ended');
         User storage us = user[msg.sender];
         require(us.active == true,'Register to participate');
         UserBets storage u = bets[msg.sender][_poolId];
         require(u.pools[index] == 0,'Already Betted');
+
+        poolBetAmount[index][_poolId] = _amount;
 
         if(u.betted == false){
             u.balance = pool_address.balanceOf(msg.sender);
@@ -661,8 +768,8 @@ contract cryptoPredictionPool is ReentrancyGuard {
        
         us.pools.push(_poolId);
         us.balance = SafeMath.add(us.balance,_amount);
-        u.pools[index] = _percent; 
-        u.prices[index] = _prices; 
+        u.pools[index] = _percent/100; 
+        u.prices[index] = _prices/100; 
         u.amounts[index] = _amount;
         u.totalbet = u.totalbet + _amount;
         d.user.push(msg.sender);
@@ -672,8 +779,7 @@ contract cryptoPredictionPool is ReentrancyGuard {
          
     }
 
-   
-    
+      
     /* Update user balance. Max 4% can be changed */
     
     function updatebal(address _user,uint256 _poolId,uint256 _reward,bool _isPositive) public returns(bool){
@@ -720,11 +826,11 @@ contract cryptoPredictionPool is ReentrancyGuard {
      function createRebase() public returns(bool) {
         require(msg.sender == owner,'Not Owner');
         require(block.timestamp > lastRebaseCreated + 30 days, "cannot create new one before 30 days cycle");
-        Rebase storage r = rebase[rebasePoolId];
+        rebasePoolId = SafeMath.add(rebasePoolId,1);
+        Rebase storage r = rebasePool[rebasePoolId];
         r.createdTime = block.timestamp;
         lastRebaseCreated = block.timestamp;
         r.endingTime = SafeMath.add(block.timestamp,30 days);
-        rebasePoolId = SafeMath.add(rebasePoolId,1);
         return true;
         
     }
@@ -733,16 +839,16 @@ contract cryptoPredictionPool is ReentrancyGuard {
     
     function createPool(uint256[15] memory _prices) public returns(bool){
         require(msg.sender == owner,'Not Owner');
-        require( block.timestamp > lastpoolcreated +  1 days,'Cannot Create');
+        // require( block.timestamp > lastpoolcreated +  1 days,'Cannot Create');
+        poolId = SafeMath.add(poolId,1);
         Pool storage b = pool[poolId];
         b.prices = _prices;
         b.startime = block.timestamp;
         lastpoolcreated = block.timestamp;
         lastcreated = block.timestamp;
-        b.endtime = SafeMath.add(block.timestamp,1 days);
-        b.stakingends = SafeMath.add(block.timestamp,12 hours);
-        poolId = SafeMath.add(poolId,1);
-        return true;
+        // b.endtime = SafeMath.add(block.timestamp,1 days);
+        // b.stakingends = SafeMath.add(block.timestamp,12 hours);
+       return true;
     }
     
     /* Update new owner of the contract */
@@ -779,11 +885,11 @@ contract cryptoPredictionPool is ReentrancyGuard {
         return(us.pools,us.username,us.freebal,us.balance,us.active);
     }
 
-    /* fetch information of the rebase pool. And number of positive days in the pool */
+    /*  Fetch the information about Rebase. */
 
-    function fetchRebasePool(uint _RebasePoolId) public view returns( uint _NumberOfOccurances, uint _numberOfPositiveDates, uint _createdTime, uint _endingTime) {
-        Rebase storage r = rebase[_RebasePoolId];
-        return(r.NumberOfOccurances, r.numberOfPositiveDates, r.createdTime, r.endingTime);
+    function fetchRebasePool(uint _RebasePoolId) public view returns( uint _NumberOfOccurances, uint _numberOfNegativeDates, uint _createdTime, uint _endingTime) {
+        Rebase storage r = rebasePool[_RebasePoolId];
+        return(r.NumberOfOccurances, r.numberOfNegativeDates, r.createdTime, r.endingTime);
     }
     
     /* Fetch the information of a PoolId */
@@ -807,9 +913,7 @@ contract cryptoPredictionPool is ReentrancyGuard {
         return d.user;
     }
     
-    /*  
-        Only Allow the Developer to withdraw the developer fee
-    */
+    /* Only Allow the Developer to withdraw the developer fee */
     
     function collectdeveloperfee() public nonReentrant returns(bool){
         require(msg.sender == owner,'To Be Claimed By Developer');

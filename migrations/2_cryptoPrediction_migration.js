@@ -1,5 +1,6 @@
 const cryptoPredictionPool = artifacts.require("cryptoPredictionPool");
 const TokenMintERC20Token = artifacts.require("TokenMintERC20Token")
+const MegaPool = artifacts.require('MegaPool')
 
 module.exports = async function (deployer) {
 
@@ -7,5 +8,6 @@ module.exports = async function (deployer) {
    const ercToken = await TokenMintERC20Token.deployed()
 
    await deployer.deploy(cryptoPredictionPool, ercToken.address);
-   const Pool = await cryptoPredictionPool.deployed()
+   
+   await deployer.deploy(MegaPool)
 };
